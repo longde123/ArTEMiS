@@ -1,6 +1,6 @@
 import * as $ from 'jquery';
 
-import { ChangeDetectorRef, Component, OnDestroy, OnInit, AfterViewInit } from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, OnDestroy, OnInit } from '@angular/core';
 import { Location } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { TextExercise } from 'app/entities/text-exercise';
@@ -29,7 +29,8 @@ export class TextAssessmentComponent implements OnInit, OnDestroy, AfterViewInit
     participation: Participation;
     submission: TextSubmission;
     result: Result;
-    assessments: Feedback[] = [];
+    generalFeedback: Feedback;
+    referencedFeedback: Feedback[];
     exercise: TextExercise;
     totalScore = 0;
     assessmentsAreValid: boolean;
@@ -41,18 +42,15 @@ export class TextAssessmentComponent implements OnInit, OnDestroy, AfterViewInit
     includeComplaint = false;
     complaint: Complaint;
     notFound = false;
-
     formattedProblemStatement: string;
     formattedSampleSolution: string;
     formattedGradingInstructions: string;
-
     /** Resizable constants **/
     resizableMinWidth = 100;
     resizableMaxWidth = 1200;
     resizableMinHeight = 200;
     interactResizable: Interactable;
     interactResizableTop: Interactable;
-
     public getColorForIndex = HighlightColors.forIndex;
 
     constructor(
@@ -67,8 +65,22 @@ export class TextAssessmentComponent implements OnInit, OnDestroy, AfterViewInit
         private $window: WindowRef,
         private artemisMarkdown: ArtemisMarkdown,
     ) {
-        this.assessments = [];
+        this.generalFeedback = new Feedback();
+        this.referencedFeedback = [];
         this.assessmentsAreValid = false;
+    }
+
+    get assessments(): Feedback[] {
+        return [this.generalFeedback, ...this.referencedFeedback];
+    }
+
+    public get headingTranslationKey(): string {
+        const baseKey = 'arTeMiSApp.textAssessment.heading.';
+
+        if (this.submission && this.submission.exampleSubmission) {
+            return baseKey + 'exampleAssessment';
+        }
+        return baseKey + 'assessment';
     }
 
     public ngOnInit(): void {
@@ -174,7 +186,7 @@ export class TextAssessmentComponent implements OnInit, OnDestroy, AfterViewInit
     }
 
     public deleteAssessment(assessmentToDelete: Feedback): void {
-        this.assessments = this.assessments.filter(elem => elem !== assessmentToDelete);
+        this.referencedFeedback = this.referencedFeedback.filter(elem => elem !== assessmentToDelete);
         this.checkScoreBoundaries();
     }
 
@@ -219,34 +231,10 @@ export class TextAssessmentComponent implements OnInit, OnDestroy, AfterViewInit
     public predefineTextBlocks(): void {
         this.assessmentsService.getResultWithPredefinedTextblocks(this.result.id).subscribe(
             response => {
-                this.assessments = response.body.feedbacks || [];
+                this.referencedFeedback = response.body.feedbacks || [];
             },
             (error: HttpErrorResponse) => this.onError(error.message),
         );
-    }
-
-    private updateParticipationWithResult(): void {
-        this.showResult = false;
-        this.changeDetectorRef.detectChanges();
-        this.participation.results[0] = this.result;
-        this.showResult = true;
-        this.changeDetectorRef.detectChanges();
-    }
-
-    private receiveParticipation(participation: Participation): void {
-        this.participation = participation;
-        this.submission = <TextSubmission>this.participation.submissions[0];
-        this.exercise = <TextExercise>this.participation.exercise;
-
-        this.formattedGradingInstructions = this.artemisMarkdown.htmlForMarkdown(this.exercise.gradingInstructions);
-        this.formattedProblemStatement = this.artemisMarkdown.htmlForMarkdown(this.exercise.problemStatement);
-        this.formattedSampleSolution = this.artemisMarkdown.htmlForMarkdown(this.exercise.sampleSolution);
-
-        this.result = this.participation.results[0];
-
-        this.assessments = this.result.feedbacks || [];
-        this.busy = false;
-        this.checkScoreBoundaries();
     }
 
     public previous(): void {
@@ -259,7 +247,13 @@ export class TextAssessmentComponent implements OnInit, OnDestroy, AfterViewInit
      * because a score is not a number/empty.
      */
     public checkScoreBoundaries() {
-        if (!this.assessments || this.assessments.length === 0) {
+        if (
+            !this.assessments ||
+            !this.generalFeedback ||
+            !this.referencedFeedback ||
+            this.assessments.length === 0 ||
+            (this.generalFeedback.detailText.length === 0 && this.referencedFeedback.length === 0)
+        ) {
             this.totalScore = 0;
             this.assessmentsAreValid = true;
             return;
@@ -294,13 +288,31 @@ export class TextAssessmentComponent implements OnInit, OnDestroy, AfterViewInit
         }
     }
 
-    public get headingTranslationKey(): string {
-        const baseKey = 'arTeMiSApp.textAssessment.heading.';
+    private updateParticipationWithResult(): void {
+        this.showResult = false;
+        this.changeDetectorRef.detectChanges();
+        this.participation.results[0] = this.result;
+        this.showResult = true;
+        this.changeDetectorRef.detectChanges();
+    }
 
-        if (this.submission && this.submission.exampleSubmission) {
-            return baseKey + 'exampleAssessment';
-        }
-        return baseKey + 'assessment';
+    private receiveParticipation(participation: Participation): void {
+        this.participation = participation;
+        this.submission = <TextSubmission>this.participation.submissions[0];
+        this.exercise = <TextExercise>this.participation.exercise;
+
+        this.formattedGradingInstructions = this.artemisMarkdown.htmlForMarkdown(this.exercise.gradingInstructions);
+        this.formattedProblemStatement = this.artemisMarkdown.htmlForMarkdown(this.exercise.problemStatement);
+        this.formattedSampleSolution = this.artemisMarkdown.htmlForMarkdown(this.exercise.sampleSolution);
+
+        this.result = this.participation.results[0];
+
+        const feedbacks = this.result.feedbacks || [];
+        const generalFeedbackIndex = feedbacks.findIndex(feedback => feedback.reference == null);
+        this.generalFeedback = feedbacks[generalFeedbackIndex] || new Feedback();
+        this.referencedFeedback = feedbacks.splice(generalFeedbackIndex, 1);
+        this.busy = false;
+        this.checkScoreBoundaries();
     }
 
     private onError(error: string) {
